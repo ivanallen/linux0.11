@@ -335,7 +335,7 @@ void trap_init(void)
 		_set_gate(&idt[n],15,3,addr)
  */
 /*
-	这部分主要是向 idt 表中安装一些中断处理过程。
+	这部分主要是向 idt 表中安装一些中断处理过程。中断到陷阱门不会改变 EFLAGS 的 IF 位。
 	set_trap_gate是安装陷阱门
 	set_system_gate和set_trap_gate的区别只是特权级不一样，
 	set_trap_gate的特权级是0，而set_system_gate是3.这是因为 int3, overflow(溢出)和bounds可以由任何程序产生

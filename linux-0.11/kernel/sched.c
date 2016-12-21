@@ -105,9 +105,7 @@ void schedule(void)
 {
 	int i,next,c;
 	struct task_struct ** p;
-
 /* check alarm, wake up any interruptible tasks that have got a signal */
-
 	/* 
 		#define FIRST_TASK task[0]
 		#define LAST_TASK task[NR_TASKS-1]
@@ -135,7 +133,7 @@ void schedule(void)
 		}
 
 /* this is the scheduler proper: */
-/* 这里调度器部分 */
+/* 这里是调度器部分 */
 	while (1) {
 		c = -1;
 		next = 0;
@@ -151,17 +149,16 @@ void schedule(void)
 
 		/* 如果 c 不等于0，break, switch_next 就直接切换到 counter 最大的那个任务 */
 		/* 如果没有任务处于就绪态，这时系统处于空闲状态，直接执行任务 0 */
-		/* 如果所有的就绪态任务时间片都是 0，则重新调整所有任务的时间片值 */
+		/* 如果   **所有的就绪态任务时间片**   都是 0，则重新调整所有任务的时间片值 */
 		if (c) break;
 
 		/* 重新调整剩余时间片的值 counter = counter / 2 + priority */
-		/* IO进程，可以认为是前台进程，这些前台进程优先级会越来越高，最大为2*priority，照顾了IO-bound进程*/
+		/* IO进程，可以认为是前台进程，这些前台进程优先级会越来越高，最大为2*priority，照顾了IO-bound进程， 而那些时间片为 0 的进程，经过重新分配后的值刚好就是 priority*/
 		/* C(t) = c(t-1)/2+p = p+p/2+p/4+p/8 +...+ p/2^n + ... = 2p */
 		for(p = &LAST_TASK ; p > &FIRST_TASK ; --p)
 			if (*p)
-				(*p)->counter = ((*p)->counter >> 1) +
-						(*p)->priority;
-		/* 完成后接着循环 */
+				(*p)->counter = ((*p)->counter >> 1) + (*p)->priority;
+		/* 完成后接着循环，下次一定能找到时间片不为 0 的进程，除非所有进程都处于阻塞状态。 */
 	}
 	switch_to(next);
 
@@ -181,11 +178,11 @@ void schedule(void)
 			"d" (_TSS(n)),"c" ((long) task[n])); \
 		}
 		
-		mov _TSS(n), %edx             取到 任务 n 的 TSS 的选择子放到 edx
+		mov _TSS(n), %edx             取到 任务 n 的 TSS 的段选择子放到 edx
 		mov task[n], %ecx             取到 任务 n 的 指针
-		cmp %ecx, 0x1b140             查看 任务 n 是不是当前任务，如果是就结束
+		cmp %ecx, 0x1b140             查看 任务 n 是不是当前任务，如果是就结束（跳到自己是没有意义的）
 		je end
-		mov %dx, 0x4(%esp)            把选择子复制到 __tmp.b 中去
+		mov %dx, 0x4(%esp)            把TSS段选择子复制到 __tmp.b 中去
 		xchg %ecx, 0x1b140			  current = task[n], ecx = current
 		ljmp *(%esp)                  ljmp __tmp  执行任务切换...注意，到这里已经跳转走了，只有任务再次切换回来，才会继续执行下面的语句
 		cmp %ecx, 0x1dee8             ecx == last_task_used_math ? clts : jmp end; 上个任务使用过协处理吗？是的就清cr0中的任务切换标志
@@ -377,7 +374,8 @@ void add_timer(long jiffies, void (*fn)(void))
 
 void do_timer(long cpl)
 {
-	/* cpl 表示时钟中断是正在被执行的代码选择段选择子的特权级 */
+	/* 当前正在中断门中，无论如何 CPU 也不会再响应外部任何中断，因此在这里也不会再次响应时钟中断 */
+	/* cpl 表示时钟中断是正在被执行的代码选择段选择子的特权级，就是当前特权级 */
 
 	extern int beepcount; /* 扬声器发声时间滴答数 kernel/chr_drv/console.c 中定义 */
 	extern void sysbeepstop(void); /* 关闭扬声器 kernel/chr_drv/console.c 中定义 */
@@ -404,7 +402,7 @@ void do_timer(long cpl)
 		} timer_list[TIME_REQUESTS], * next_timer = NULL;
 
 		这是一个链表，串接了所有的定时器。
-		如果有定时器存在，则将链表中第1个定时器的值减 1，如果已经等于 0，则调用相应的处理程序，并将
+		如果有定时器存在，则将链表中每个定时器的值减 1，如果已经等于 0，则调用相应的处理程序，并将
 		该处理程序指针置为空。然后去掉该定时器。next_timer 是定时器链表的头指针。
 	 */
 	if (next_timer) {
@@ -423,11 +421,11 @@ void do_timer(long cpl)
 	if (current_DOR & 0xf0)
 		do_floppy_timer();
 
-	/* 如果当前进程时间还没完，直接返回，否则强制调用执行调度函数 */
+	/* 将当前进程时间片减1， 如果进程时间还没完，直接返回继续执行本进程。一个进程的时间片的默认长度是 15， 约 150 ms*/
 	if ((--current->counter)>0) return;
 	current->counter=0;
 
-	/* 内核态下，不依赖counter值进行调度 */
+	/* 内核态下，不依赖counter值进行调度，换句话说，就是内核情况下不进行程序调度 */
 	if (!cpl) return;
 
 	/* 执行调度 */
@@ -495,7 +493,7 @@ void sched_init(void)
 
 	/* 
 		Linux 系统开发之初，内核不成熟。内核代码会被经常修改。
-		Linux 怕自己无意中修改了这些关键性的数据结构，造成与 
+		Linus 怕自己无意中修改了这些关键性的数据结构，造成与 
 		POSIX 标准的不兼容。这里加入下面这个判断语句并无必要，
 		纯粹是为了提醒自己以及其他修改内核代码的人
 	 */
@@ -504,12 +502,12 @@ void sched_init(void)
 	/* 
 		FIRST_TSS_ENTRY = 4, gdt 表在 head.s 中定义 基地址是 0x5cb8 
 		FIRST_LDT_ENTRY = 5
-		在 gdt[4] 处安装 tss（任务状态段），这里需要 tss 的基址和界限
-		在 gdt[5] 处安装 ldt
+		在 gdt[4] 处安装 tss（任务状态段描述符），这里需要 tss 的基址和界限
+		在 gdt[5] 处安装 ldt 描述符
 		这是 gdt 描述符中的 S 位置 1，表示这是系统段
 		同时， TYPE = 9 表示 TSS   TYPE = 2 表示 ldt 表
-		gdt[4] = 0x0000 8901 a428 0068 base = 0x0001 a428 limit =  0x68 = 105
-		gdt[5] = 0x0000 8201 a410 0068 base = 0x0001 a410 limit =  0x68 = 105
+		gdt[4] = 0x0000 8901 a428 0068 base = 0x0001 a428 limit =  0x68 = 104
+		gdt[5] = 0x0000 8201 a410 0068 base = 0x0001 a410 limit =  0x68 = 104
 		界限值至少是 103，任何小于该值的 TSS，在执行任务切换时，都会引发处理器异常。
 
 
@@ -527,6 +525,9 @@ void sched_init(void)
 		struct task_struct *last_task_used_math = NULL;
 
 		struct task_struct * task[NR_TASKS] = {&(init_task.task), };
+
+		#define set_tss_desc(n,addr) _set_tssldt_desc(((char *) (n)),((int)(addr)),"0x89")  TYPE=9, 这是 TSS 
+        #define set_ldt_desc(n,addr) _set_tssldt_desc(((char *) (n)),((int)(addr)),"0x82")  TYPE=2, 这是 ldt 
 	 */
 	set_tss_desc(gdt+FIRST_TSS_ENTRY,&(init_task.task.tss));
 	set_ldt_desc(gdt+FIRST_LDT_ENTRY,&(init_task.task.ldt));
@@ -585,7 +586,7 @@ void sched_init(void)
 	outb_p(0x36,0x43);		/* binary, mode 3, LSB/MSB, ch 0 */
 	outb_p(LATCH & 0xff , 0x40);	/* LSB */
 	outb(LATCH >> 8 , 0x40);	/* MSB */
-	set_intr_gate(0x20,&timer_interrupt);
+	set_intr_gate(0x20,&timer_interrupt); /* 时钟中断门，注意这是中断门，不是陷阱门。进入中断门后，EFLAGS的IF被清0 */
 	outb(inb_p(0x21)&~0x01,0x21);
 	set_system_gate(0x80,&system_call);
 }

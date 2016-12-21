@@ -71,8 +71,8 @@ int copy_mem(int nr,struct task_struct * p)
  /* 
 		内核栈的样子：
 	|ret addr| <- esp[0]             esp + 0
-	|   EAX  | <- esp[1]             esp + 4      这些都是用户态的寄存器，先保存到内核栈里
-	|   EBP  | <- esp[2]             esp + 8
+	|   EAX  | <- esp[1]             esp + 4      这些都是用户态的寄存器，先保存到内核栈里，这个参数对应 nr
+	|   EBP  | <- esp[2]             esp + 8      这个对应参数 ebp，后面依此类推
 	|   EDI  | <- esp[3]             esp + c
 	|   ESI  | <- esp[4]             esp + 10     
 	|   GS   | <- esp[5]             esp + 14
@@ -84,7 +84,7 @@ int copy_mem(int nr,struct task_struct * p)
 	|   DS   | <- esp[11]            esp + 2c
 	|   EIP  | <- esp[12]            esp + 30
 	|   CS   | <- esp[13]            esp + 34
-	| EFLAGS | <- esp[14]            esp + 38
+	| EFLAGS | <- esp[14]            esp + 38     通过陷阱门过来的，所以这里有 EFLAGS 
 	|   ESP  | <- esp[15]            esp + 3c
 	|   SS   | <- esp[16]            esp + 40
 	|   ...  | <- esp[17]            esp + 44
@@ -96,7 +96,7 @@ int copy_mem(int nr,struct task_struct * p)
 	在 fork() 的执行过程中，即下面的 copy_process，内核并不会立刻为新进程分配代码和数据
 	内存页。新进程将与父进程共同使用父进程已有的代码和数据内存页面。只有当以后执行过程中
 	如果其中有一个进程以写的方式访问内存时被访问的内存页面才会在写操作前被复制到新申请的
-	内存页面中。
+	内存页面中。这种实现方式称为 copy on write (写时复制)
  */
 int copy_process(int nr,long ebp,long edi,long esi,long gs,long none,
 		long ebx,long ecx,long edx,
@@ -143,7 +143,7 @@ int copy_process(int nr,long ebp,long edi,long esi,long gs,long none,
 	p->tss.ds = ds & 0xffff;
 	p->tss.fs = fs & 0xffff;
 	p->tss.gs = gs & 0xffff;
-	p->tss.ldt = _LDT(nr); /* 任务的局部描述符表的选择子 */
+	p->tss.ldt = _LDT(nr); /* 任务的局部描述符表的段选择子 */
 	p->tss.trace_bitmap = 0x80000000;
 	if (last_task_used_math == current)
 		__asm__("clts ; fnsave %0"::"m" (p->tss.i387));
@@ -164,7 +164,19 @@ int copy_process(int nr,long ebp,long edi,long esi,long gs,long none,
 		current->executable->i_count++;
 	set_tss_desc(gdt+(nr<<1)+FIRST_TSS_ENTRY,&(p->tss));
 	set_ldt_desc(gdt+(nr<<1)+FIRST_LDT_ENTRY,&(p->ldt));
-	p->state = TASK_RUNNING;	/* do this last, just in case 已经可以被调度运行了 */
+
+
+	/* do this last, just in case 已经可以被调度运行了 
+	   有一点需要注意的是，进入 sys_fork 的一瞬间，进程的 ss esp eflags cs eip 会被 CPU 自动保存到内核栈上，
+	   当 sys_fork 从内核返回(iretd 指令)，cpu 会根据 ss esp eflags cs eip 找到用户栈以及需要执行下一条用户态指令。
+
+	   新进程被调度（ jmp tss ）的时候，从 TSS 结构体中取出进入 sys_fork 那一瞬间前的寄存器快照复制到 CPU 环境中，（注意这个 TSS 是通过人为构造的）
+	   然而不同的是，eip 指令并不是快照，而是 sys_fork 的下一条指令的地址。
+
+	   总结：fork 函数的目的，就是构造 sys_fork 下一条指令的执行时那一刻的 CPU 快照。
+	   也就是 mov eax, 2; int 0x80; 执行完时的 CPU 快照。
+	*/
+	p->state = TASK_RUNNING;	
 	return last_pid;
 }
 

@@ -260,7 +260,7 @@ void main(void)		/* This really IS void, no error here. */
 		|  |  0x17  |  SS
 		`->|  ...   |
 	 */
-	move_to_user_mode(); /* 移到用户模式下执行 */
+	move_to_user_mode(); /* 移到用户模式下执行，进入 3 环 */
 	if (!fork()) {		/* we count on this going ok */
 		init(); /* 在新建的子进程（任务1）中执行 */
 	}

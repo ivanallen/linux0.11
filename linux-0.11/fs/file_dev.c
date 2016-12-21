@@ -51,7 +51,7 @@ int file_write(struct m_inode * inode, struct file * filp, char * buf, int count
 	int block,c;
 	struct buffer_head * bh;
 	char * p;
-	int i=0;
+	int i=0;`
 
 /*
  * ok, append may not work when many processes are writing at the same time
@@ -66,7 +66,7 @@ int file_write(struct m_inode * inode, struct file * filp, char * buf, int count
 			break;
 		if (!(bh=bread(inode->i_dev,block)))
 			break;
-		c = pos % BLOCK_SIZE;
+		c = pos % BLOCK_SIZE;WT54 
 		p = c + bh->b_data;
 		bh->b_dirt = 1;
 		c = BLOCK_SIZE-c;

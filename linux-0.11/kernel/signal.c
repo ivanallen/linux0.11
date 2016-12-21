@@ -45,6 +45,8 @@ static inline void get_new(char * from,char * to)
 		*(to++) = get_fs_byte(from++);
 }
 
+
+/*restorer 参数由 libc 提供*/
 int sys_signal(int signum, long handler, long restorer)
 {
 	struct sigaction tmp;
@@ -111,7 +113,7 @@ void do_signal(long signr,long eax, long ebx, long ecx, long edx,
 			void (*sa_handler)(int);
 			sigset_t sa_mask;
 			int sa_flags;
-			void (*sa_restorer)(void);
+			void (*sa_restorer)(void); 清理函数由 libc 提供
 		};
 		current中的 sigaction 是一个类型为 struct sigaction 的大小为32的数组。
 		下面这句是找到当前信号对应的 sigaction
@@ -139,27 +141,31 @@ void do_signal(long signr,long eax, long ebx, long ecx, long edx,
 
 /*
 	用户栈：
-	|  old  | <-esp     旧的用户栈的栈顶
+	|  old  | <-esp     旧的用户栈的栈顶(通过 iret 返回到用户态时用户栈的样子)
 	|  ???  | <-esp + 4
 
  */
-	*(&eip) = sa_handler; /* 把返回到用户态的 eip 指针改为该函数，注意，这里是直接修改了栈上那块内存 */
 
+	/* 把返回到用户态的 eip 指针改为该函数，注意，这里是直接修改了栈上那块内存，
+	   这样的话 iret 就无法返回到进入内核态前的样子了，而是 iret 到了 sa_handler 这个信号处理函数里。
+	   所以这里还必需要手工构造 sa_handler 函数的运行栈空间。
+	*/
+	*(&eip) = sa_handler; 
 
 	longs = (sa->sa_flags & SA_NOMASK)?7:8; 
 	*(&esp) -= longs;        /* 将原用户堆栈指针 esp 向下扩展 7 或者 8 个 4 字节(用来存放调用信号句柄的参数等) */
 
 /*
-	这样修改后，当从 iret 返回后，用户栈的栈顶会变成这样子
+	这样修改后，当从 iret 返回后，用户栈的栈顶会变成这样子。也就是为 sa_handler 函数手工构造了一个栈空间
 	用户栈：
 	
-	|  ???  | <-esp + 0
-	|  ???  | <-esp + 4
-	|  ???  | <-esp + 8
-	|  ???  | <-esp + c
-	|  ???  | <-esp + 10
-	|  ???  | <-esp + 14
-	|  ???  | <-esp + 18
+	|  ???  | <-esp + 0     sa_restorer 该值由 libc 函数库提供。
+	|  ???  | <-esp + 4     signr
+	|  ???  | <-esp + 8     eax
+	|  ???  | <-esp + c     ecx
+	|  ???  | <-esp + 10    edx
+	|  ???  | <-esp + 14    eflags
+	|  ???  | <-esp + 18    这里需要填写 ret 地址，也就是旧的 eip
 	|  ???  | <-esp + 1c    旧的用户栈的栈顶
 	|  old  | <-esp + 20
 
@@ -183,16 +189,36 @@ void do_signal(long signr,long eax, long ebx, long ecx, long edx,
 /*
 	用户栈：
 	
-	|sa_rest| <-esp + 0
-	| signr | <-esp + 4
-	|blocked| <-esp + 8
+	|sa_rest| <-esp + 0   返回到清理函数的地址，该函数地址由 libc 函数库提供。
+	| signr | <-esp + 4   参数1，信号值
+	|blocked| <-esp + 8   <--  如果有这个的话
 	|  eax  | <-esp + c
 	|  ecx  | <-esp + 10
 	|  edx  | <-esp + 14
 	|eflags | <-esp + 18
-	|old_eip| <-esp + 1c    旧的用户栈的栈顶，信号处理函数返回后，将转到 int 80 后面那条指令，当然也可能是别的中断后面那条。
-	|  old  | <-esp + 20
+	|old_eip| <-esp + 1c    本来应该返回的地址
+	|  ???  | <-esp + 20    旧的用户栈的栈顶，信号处理函数返回后，将转到 int 80 后面那条指令，当然也可能是别的中断后面那条。
+	|  old  | <-esp + 24
 
+
+
+    sa_restorer:   没有block 的版本
+      add esp, 4 丢弃 signr
+      pop eax
+      pop ecx
+      pop edx
+      popfd
+      ret
+
+    sa_restorer:
+      add esp, 4
+      call __ssetmask
+      add esp, 4 丢弃 block
+      pop eax
+      pop ecx
+      pop edx
+      popfd
+      ret
  */
 }
 

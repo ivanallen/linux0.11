@@ -182,7 +182,7 @@ static unsigned long change_ldt(unsigned long text_size,unsigned long * page)
 int do_execve(unsigned long * eip,long tmp,char * filename,
 	char ** argv, char ** envp)
 {
-	struct m_inode * inode;
+	struct m_inode * inode;    
 	struct buffer_head * bh;
 	struct exec ex;
 	unsigned long page[MAX_ARG_PAGES];
@@ -201,8 +201,14 @@ int do_execve(unsigned long * eip,long tmp,char * filename,
 	argc = count(argv);
 	envc = count(envp);
 	
+	/*
+	i_mode:
+
+	|----|---|---------| 
+	|type|   |RWXRWXRWX|
+	*/
 restart_interp:
-	if (!S_ISREG(inode->i_mode)) {	/* must be regular file */
+	if (!S_ISREG(inode->i_mode)) {	/* must be regular file */          
 		retval = -EACCES;
 		goto exec_error2;
 	}
